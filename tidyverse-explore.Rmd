@@ -3,9 +3,8 @@ title: "Exploratory Data Analysis in the Tidyverse"
 subtitle: "SLC R Users' Group"
 author: "Michael Levy <michael.levy@healthcatalyst.com>"
 date: "2018-04-05"
-output: 
+output: # github_document
   html_document:
-  # html_notebook:
     theme: united
     toc: yes
 editor_options:
@@ -57,7 +56,7 @@ library(tidyverse)
 
 We'll start with one of the non-core packages, `readxl` to load our data.
 
-The data we'll be exploring comes from the 2018 [World Happiness Report](http://worldhappiness.report/ed/2018/) which uses the Gallup World Poll as its source. The data are available [here](https://s3.amazonaws.com/happiness-report/2018/WHR2018Chapter2OnlineData.xls) as a `.xls` file. The `tidyverse` package `readxl` will allow us to import it directly into R.
+The data we'll be exploring comes from the 2018 [World Happiness Report](http://worldhappiness.report/ed/2018/) which uses the Gallup World Poll as its source. The data are available [here](https://s3.amazonaws.com/happiness-report/2018/WHR2018Chapter2OnlineData.xls) as a `.xls` file. There is more information on the questions contained in this report in the [data appendix](#app). The `tidyverse` package `readxl` will allow us to import it directly into R.
 
 ```{r}
 d <- readxl::read_excel("WHR2018Chapter2OnlineData.xls")
@@ -169,6 +168,7 @@ d %>%
   facet_wrap(~ question, scales = "free_y", ncol = 3) + 
   scale_x_continuous(breaks = seq(2004, 2016, 2))
 ```
+
 
 # `tidyr`
 
@@ -366,9 +366,84 @@ safe_square(2)
 safe_square("A")
 ```
 
+# More Explore
+
+Life ladder is our main variable of interest, so let's look at how it is distributed and what might be driving it.
+
+First let's look for trend over time.
+
+```{r}
+d %>%
+   ggplot(aes(x = factor(year), y = life_ladder)) + 
+   geom_boxplot()
+```
+
+Hmm, 2005 looks anomolous. I bet there's missing data there. Let's see.
+
+```{r}
+d %>%
+  group_by(year) %>%
+  mutate(count = n()) %>%
+  ggplot(aes(x = paste0(year, "\nn=", count), y = life_ladder)) + 
+  geom_boxplot()
+```
+
+Okay, maybe a slight upward trend over time. How unequal are the regions?
+
+```{r}
+d %>%
+  ggplot(aes(x = fct_reorder(region, life_ladder, median), y = life_ladder)) +
+  geom_boxplot() +
+  coord_flip()
+```
+
+Is the trend over time different among regions?
+
+```{r}
+d %>%
+  filter(!is.na(region)) %>%
+  ggplot(aes(x = year, y = life_ladder, group = country, color = region)) + 
+  geom_smooth(se = FALSE, method = "lm", size = .25) + 
+  facet_wrap(~ region, ncol = 3) + 
+  guides(color = FALSE) +
+  scale_x_continuous(labels = function(x) round(x, 0))
+```
+
+Hmm, hard to tell. Let's fit a linear model of life ladder vs. year for each country and then look at the slope coefficients across region. Obviously this isn't good statistical practice, but it might be a reasonable way to explore trends, and more importantly, it allows demonstration of some neat tidyverse functionality.
+
+```{r}
+d %>%
+  filter(!is.na(life_ladder), !is.na(region)) %>%
+  group_by(country) %>%
+  do(model = lm(life_ladder ~ year, .)) %>%
+  mutate(beta_year = coef(model)["year"]) %>%
+  left_join(select(d, country, region)) %>%  # Could've included region in group by, but isn't it neat how easy joins are!?
+  ggplot(aes(x = fct_reorder(region, beta_year, median), y = beta_year)) + 
+  geom_boxplot() + 
+  coord_flip() 
+```
+
+Interesting... it seems like the greatest positive trend is in regions where there's been substantial economic development over this period. Let's fit another set of models: change of GDP over time, and plot those coefficients against the coefficients for life ladder.
+
+```{r, fig.height = 10, fig.width = 10}
+d %>%
+  filter(!is.na(life_ladder), !is.na(region), !is.na(log_gdp_per_capita)) %>%
+  group_by(country, region) %>%
+  do(ladder_model = lm(life_ladder ~ year, .),
+     gdp_model = lm(log_gdp_per_capita ~ year, .)) %>%
+  mutate(beta_ladder = coef(ladder_model)["year"],
+         beta_gdp = coef(gdp_model)["year"]) %>%
+  ggplot(aes(x = beta_gdp, y = beta_ladder, label = country)) + 
+  geom_smooth(method = "lm", color = "black") +
+  geom_text(aes(color = region), size = 4, check_overlap = TRUE) + 
+  guides(color = FALSE) 
+
+```
+
+Look at that upward slope: Countries that have seen more growth in their per-capita GDP over this period have seen more growth in their assessment of wellbeing.
 
 
-# Data Appendix
+# Data Appendix {#app}
 
 Ladder:
 
