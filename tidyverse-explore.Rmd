@@ -1,0 +1,395 @@
+---
+title: "Exploratory Data Analysis in the Tidyverse"
+subtitle: "SLC R Users' Group"
+author: "Michael Levy <michael.levy@healthcatalyst.com>"
+date: "2018-04-05"
+output: 
+  html_document:
+  # html_notebook:
+    theme: united
+    toc: yes
+editor_options:
+  chunk_output_type: inline
+# !diagnostics off
+---
+
+```{r setup, include = FALSE}
+library(knitr)
+opts_chunk$set(rows.print = 5, fig.width = 8, fig.width = 6)
+```
+
+# What is the Tidyverse?
+
+![](hex-tidyverse.png){width=150px}
+
+> The tidyverse is an opinionated collection of R packages designed for data science. All packages share an underlying design philosophy, grammar, and data structures. 
+
+- Associated with Hadley Wickham & Backed by RStudio
+- Data frames are the cornerstone
+- Use [tidy data](https://cran.r-project.org/web/packages/tidyr/vignettes/tidy-data.html)
+  - Each observation gets a row
+  - Each variable gets a column
+  - Each type of observation gets a table
+- Consistent nonstandard evaluation (NSE)
+- Standard API: Data frame (or vector) is first argument
+  - Enables piping
+
+## Packages
+
+Core -- attached on `library(tidyverse)`:
+
+- `readr`: Data import
+- `tibble`: Better data frames
+- `tidyr`: Data reshaping
+- `dplyr`: Data manipulation
+- `stringr`: String manipulation
+- `forcats`: Factor manipulation
+- `ggplot2`: Data visualization
+- `purrr`: Functional programming
+
+Non-core -- installed on `install.packages("tidyverse")`: `lubridate`, `recipes`, `readxl`, `rlang`, and more...
+
+```{r}
+library(tidyverse)
+```
+
+# `readxl`
+
+We'll start with one of the non-core packages, `readxl` to load our data.
+
+The data we'll be exploring comes from the 2018 [World Happiness Report](http://worldhappiness.report/ed/2018/) which uses the Gallup World Poll as its source. The data are available [here](https://s3.amazonaws.com/happiness-report/2018/WHR2018Chapter2OnlineData.xls) as a `.xls` file. The `tidyverse` package `readxl` will allow us to import it directly into R.
+
+```{r}
+d <- readxl::read_excel("WHR2018Chapter2OnlineData.xls")
+```
+
+# `tibble`
+
+What did we get? A "tibble" (`tbl_df`) with child-class `data.frame`.
+
+```{r}
+class(d)
+```
+
+Tibbles are opinionated in their printing, among other things. Some of the print options are a little intrusive for me, so I [customize them](https://www.tidyverse.org/articles/2018/01/tibble-1-4-2/) in my `.Rprofile` file, e.g. `pillar.subtle = FALSE` to avoid graying-out insignificant digits.
+
+```{r}
+d
+```
+
+### No partial name matching
+
+```{r}
+d$count
+```
+
+### Tibbles stay tibbles
+
+Following is equivalent to `data.frame[, "country", drop = FALSE]`, where without specifying `drop` we would "drop" a dimension and (surprise!) get a vector back. 
+
+```{r}
+d[, "country"]
+```
+
+### Strings not automatically factors
+
+```{r}
+animals <- tibble(name = c("Fido", "Socks", "Ralph"),
+                  species = factor(c("dog", "cat", "dog")))
+animals
+```
+
+### `tribble` to create by row instead of by column:
+
+```{r}
+tribble(
+  ~name,  ~age,  ~state,
+  "Jill", 24,    "CA",
+  "Joe",  65,    "AK",
+  "Sam",  14,    "CO"
+)
+```
+
+### Clean column names
+
+`tibble` supports non-syntactic names, and tidyverse import functions don't generally sanitize names. But, protecting them with backticks is annoying, so let's clean them up. `tibble::set_tidy_names` also makes sure there are no duplicated names, as can happen on a join and bite hard.
+
+```{r}
+d <- set_tidy_names(d, syntactic = TRUE)
+```
+
+# `stringr`
+
+I dislike using "." to separate words, and I really dislike the ".." that's left where there was " (", so let's replace any number of dots with one underscore. Enter `stringr` for string manipulation. 
+
+```{r}
+str_replace_all(names(d), "\\.+", "_")
+```
+
+Things I like about `stringr`:
+
+- String always comes first, then the pattern
+- Consistent, descriptive names (`regexpr`, `gregexpr`, `regexec`... `r emo::ji("rage")`)
+- `fixed` function for no regex: `str_split("3.2.0", fixed("."))` yields `r str_split("3.2.0", fixed("."))[[1]]`
+
+# `magrittr`
+
+`magrittr` gives us a pipe operator, `%>%`, which sends the output of the function on its LHS to the input of the function on its RHS.
+
+It allows us to avoid having to choose between nesting functions, in which case arguments get far away from their functions, or repeated reassignment, which either clutters the workspace or can make it hard to recover from mistakes.
+
+I didn't actually change the names of the data frame above. In addition to replacing dots with underscores, I want to make everything lowercase. I'll do both in one assignment and no nesting with the pipe.
+
+```{r}
+names(d) <- 
+  names(d) %>%
+  str_replace_all("\\.+", "_") %>%
+  tolower()
+```
+
+# `ggplot2`
+
+> If visualization isn't part of your exploratory process, you're doing it wrong.
+
+```{r}
+d %>%
+  ggplot(aes(x = year, y = healthy_life_expectancy_at_birth, group = country)) +
+  geom_line(alpha = .5) + 
+  scale_x_continuous(breaks = seq(2004, 2016, 2))
+```
+
+How about we look at all of the variables' trends over time?
+
+```{r, fig.height = 10, fig.width = 8}
+d %>%
+  gather(key = question, value = value, -country, -year) %>%
+  mutate(question = fct_inorder(question)) %>%
+  ggplot(aes(x = year, y = value, group = country)) + 
+  geom_line(alpha = .25) + 
+  facet_wrap(~ question, scales = "free_y", ncol = 3) + 
+  scale_x_continuous(breaks = seq(2004, 2016, 2))
+```
+
+# `tidyr`
+
+`tidyr` supersedes `reshape` and `reshape2` and does less. It mainly has two functions, `gather` and `spread`, which are similar to the older `melt` and `dcast` functions.
+
+Our data is already tidy: each row is an observation (country-year) and each variable is a column. 
+
+This is a trick to get the plot I want -- let's imagine that each question asked is a variable, making the unit of observation a country-year-question. Then we'd need one more variable: The answer to the question, which I'm calling "value".
+
+```{r}
+d %>%
+  gather(key = question, value = value, -country, -year) 
+```
+
+# `forcats`
+
+Factors can be pain; `forcats` eases that pain. 
+
+`fct_inorder` reorders the level of a factor in the order they appear in a data frame. 
+
+```{r}
+d %>%
+  gather(key = question, value = value, -country, -year) %>%
+  pull(question) %>%
+  fct_inorder() %>%
+  levels()
+```
+
+# `dplyr`
+
+```{r}
+d %>%
+  gather(key = question, value = value, -country, -year) %>%
+  mutate(question = fct_inorder(question))
+```
+
+`group_by` provides a much friendlier version of `aggregate` or `tapply` and maintains the data frame centric paradigm.
+
+```{r}
+d %>%
+  group_by(country) %>%
+  summarize(mean_gdp = mean(log_gdp_per_capita),
+            sd_gdp = sd(log_gdp_per_capita),
+            rsd_gdp = sd_gdp / mean_gdp) %>%
+  arrange(desc(rsd_gdp))
+```
+
+Let's shift back to `ggplot` to take a visual look at the same phenomenon.
+
+I want to plot the distribution of GDP by country and have that look sensible across `r length(unique(d$country))` countries, and I only want to include countries for which we have more than two observations of GDP. And just for fun, we'll color each country by its "affect score" the mean difference between its positive and negative affect over the years.
+
+To filter to countries where we have more than two recorded GDPs, we take advantage of a neat self-join trick. Normally `group_by` is followed by `summarize`, which aggregates across rows; but, `group_by` %>% `mutate` calculates group-level statistics and appends them to every row. Here, this allows us to filter countries based on how many recorded GDPs they have and calculate a mean affect score for each country, all without leaving our original data frame.
+
+```{r, fig.height = 12, fig.width = 6}
+d %>%
+  group_by(country) %>%
+  mutate(gdp_country_obs = n_distinct(log_gdp_per_capita, na.rm = TRUE),
+         affect_score = mean(positive_affect - negative_affect, na.rm = TRUE)) %>%
+  filter(gdp_country_obs > 2) %>%
+  select(-gdp_country_obs) %>%
+  ggplot(aes(x = fct_reorder(country, log_gdp_per_capita, quantile, .75, na.rm = TRUE), 
+             y = log_gdp_per_capita,
+             color = affect_score)) + 
+  geom_boxplot(outlier.size = .5) + 
+  coord_flip() +
+  xlab(NULL) + 
+  scale_y_continuous(labels = function(x) paste0("$", round(exp(x), 0))) + 
+  viridis::scale_color_viridis() +
+  theme(axis.text.y = element_text(size = 6))
+```
+
+Hmm, it looks like all mean affect scores are positive. I wonder what the relationship between positive and negative affect is. Let's take a look!
+
+```{r}
+affect_plot <- 
+  d %>%
+  ggplot(aes(x = negative_affect, y = positive_affect)) +
+  geom_abline(slope = -1, intercept = 1, color = "dodgerblue", linetype = "dashed") +
+  geom_point(size = .5, alpha = .5) +
+  coord_fixed(xlim = 0:1, ylim = 0:1)
+ggExtra::ggMarginal(affect_plot)
+```
+
+```{r}
+d %>%
+  select_if(is.numeric) %>%
+  select(-year, -starts_with("gini"), -starts_with("standard")) %>%
+  cor(use = "pairwise") %>%
+  as.data.frame() %>%
+  rownames_to_column("var1") %>%
+  gather(var2, cor, -var1) %>%
+  mutate(var1 = fct_reorder(var1, cor, median),
+         var2 = fct_reorder(var2, cor, median)) %>%
+  ggplot(aes(x = var1, y = var2, fill = cor)) + 
+  geom_raster() + 
+  scale_fill_gradient2(midpoint = 0) + 
+  coord_fixed() +
+  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust = .5))
+```
+
+`dplyr` does joins! 
+
+There's another sheet in the dataset that has each country's region. Let's attach those to this dataset.
+
+```{r}
+readxl::excel_sheets("WHR2018Chapter2OnlineData.xls")
+reg <- readxl::read_excel("WHR2018Chapter2OnlineData.xls", sheet = "SupportingFactors")
+reg <- reg %>% select(country, region = `Region indicator`)
+reg
+```
+
+```{r, rows.print = 10}
+count(reg, region, sort = TRUE)
+```
+
+```{r}
+filter(reg, str_detect(region, "ANZ"))
+```
+
+```{r}
+d <- left_join(d, reg) %>%
+  select(country, region, everything())
+d
+```
+
+```{r}
+d %>%
+  group_by(country, region) %>%
+  summarize_at(vars(-year), mean, na.rm = TRUE) %>%
+  ggplot(aes(x = log_gdp_per_capita, y = life_ladder)) + 
+  geom_point() + 
+  facet_wrap(~region, ncol = 3)
+```
+
+```{r}
+d %>%
+  filter(is.na(region)) %>%
+  distinct(country)
+```
+
+# `purrr`
+
+`purrr` is awesome, and underappreciated. I think it's more valuable for programming than for EDA, but here are some of my favorite things.
+
+## Improved `vapply`
+
+```{r}
+map_lgl(d, is.numeric)
+map_dbl(d, ~ sum(is.na(.x)))
+```
+
+## Improved `plyr::ldply`
+
+```{r}
+map_df(1:5, ~ data_frame(int = .x,
+                         sq = .x ^ 2,
+                         letter = letters[.x]))
+```
+
+
+## Improved `mapply`
+
+```{r}
+map2_chr(c("James", "Jill", "Joe"), c(9, 12, 7), ~ paste(.x, "is", .y, "years old."))
+```
+
+## Improved `unlist`
+
+```{r}
+nested_list <- 
+  list(
+    outer1 = list(
+      inner1 = 1:3,
+      inner2 = 4:6
+    ),
+    outer2 = list(
+      inner1 = letters[1:3],
+      inner2 = letters[4:6]
+    )
+  ) 
+flatten(nested_list)
+```
+
+## Transpose lists
+
+```{r}
+transpose(nested_list)
+```
+
+## Improved `tryCatch`
+
+```{r}
+safe_square <- safely(~ .x ^ 2)
+safe_square(2)
+safe_square("A")
+```
+
+
+
+# Data Appendix
+
+Ladder:
+
+Please imagine a ladder with steps numbered from zero at the bottom to ten at the top. Suppose we say that the top of the ladder represents the best possible life for you and the bottom of the ladder represents the worst possible life for you.
+If the top step is 10 and the bottom step is 0, on which step of the ladder do you feel you personally stand at the present time?
+
+Taken from 2018 report, p. 20.
+
+1. GDP per capita is in terms of Purchasing Power Parity (PPP) adjusted to constant 2011 international dollars, taken from the World Development Indicators (WDI) released by the World Bank in September 2017. See Appendix 1 for more details. GDP data for 2017 are not yet available, so we extend the GDP time series from 2016 to 2017 using country-specific forecasts of real GDP growth from the OECD Economic Outlook No. 102 (Edition November 2017) and the World Bank’s Global Economic Prospects (Last Updated: 06/04/2017), after adjustment for population growth. The equation uses the natural log of GDP per capita, as this form fits the data significantly better than GDP per capita. 
+
+2. The time series of healthy life expectancy at birth are constructed based on data from the World Health Organization (WHO) and WDI. WHO publishes the data on healthy life expectancy for the year 2012. The time series of life expectancies, with no adjustment for health, are available in WDI. We adopt the following strategy to construct the time series of healthy life expectancy at birth: first we generate the ratios of healthy life expectancy to life expectancy in 2012 for countries with both data. We then apply the country-specific ratios to other years to generate the healthy life expectancy data. See Appendix 1 for more details. 
+
+3. Social support is the national average of the binary responses (either 0 or 1) to the Gallup World Poll (GWP) question “If you were in trouble, do you have relatives or friends you can count on to help you whenever you need them, or not?” 
+
+4. Freedom to make life choices is the national average of binary responses to the GWP question “Are you satisfied or dissatisfied with your freedom to choose what you do with your life?” 
+
+5. Generosity is the residual of regressing the national average of GWP responses to the question “Have you donated money to a charity in the past month?” on GDP per capita. 
+
+6. Perceptions of corruption are the average of binary answers to two GWP questions: “Is corruption widespread throughout the government or not?” and “Is corruption widespread within businesses or not?” Where data for government corruption are missing, the perception of business corruption is used as the overall corruption-perception measure. 
+
+7. Positive affect is defined as the average of previous-day affect measures for happiness, laughter, and enjoyment for GWP waves 3-7 (years 2008 to 2012, and some in 2013). It is defined as the average of laughter and enjoyment for other waves where the happiness question was not asked. 
+
+8. Negative affect is defined as the average of previous-day affect measures for worry, sadness, and anger for all waves. See Statistical Appendix 1 for more details. 
+
