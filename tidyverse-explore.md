@@ -834,7 +834,7 @@ d %>%
 
 ![](tidyverse-explore_files/figure-gfm/unnamed-chunk-33-1.png)<!-- -->
 
-Hmm, 2005 looks anomolous. I bet there’s missing data there. Let’s see.
+Hmm, 2005 looks anomalous. I bet there’s missing data there. Let’s see.
 
 ``` r
 d %>%
@@ -917,7 +917,67 @@ d %>%
 
 Look at that upward slope: Countries that have seen more growth in their
 per-capita GDP over this period have seen more growth in their
-assessment of wellbeing.
+assessment of well-being.
+
+# Does satisfaction saturate with income?
+
+There’s a well-trod finding from behavioral economics that increasing
+income increases happiness up to a point, but then saturates. Let’s see
+if there’s evidence for that in this dataset. We’ll look at each
+country’s median GDP and satisfaction (life ladder) here and ignore
+changes over time.
+
+``` r
+country_medians <- 
+  d %>%
+  group_by(country) %>%
+  summarize(gdp = median(exp(log_gdp_per_capita)),
+            ladder = median(life_ladder))
+linear_gdp_plot <- 
+  country_medians %>%
+  ggplot(aes(x = gdp, y = ladder)) + 
+  geom_point() 
+log_gdp_plot <- 
+  country_medians %>%
+  ggplot(aes(x = gdp, y = ladder)) + 
+  geom_smooth(method = "lm") +
+  geom_point() +
+  scale_x_log10() + 
+  annotation_logticks(sides = "b")
+cowplot::plot_grid(linear_gdp_plot, log_gdp_plot)
+```
+
+    ## Warning: Removed 11 rows containing missing values (geom_point).
+
+    ## Warning: Removed 11 rows containing non-finite values (stat_smooth).
+
+    ## Warning: Removed 11 rows containing missing values (geom_point).
+
+![](tidyverse-explore_files/figure-gfm/unnamed-chunk-39-1.png)<!-- -->
+
+You could certainly interpret the left plot, of satisfaction as a
+function of linear GPD as saturating around $ 40k / year and being flat
+after that. However, it also looks like a logarithmic relationship that
+would indicate decreasing marginal utility of income, but not
+saturating. The plot on the right shows this relationship with a linear
+fit line. We can use the `augment` function from the `broom` package to
+extract the residuals from this model. If those residuals were trending
+negative as income increased, that would provide evidence of a
+saturating relationship.
+
+``` r
+m <- lm(ladder ~ log10(gdp), country_medians)
+broom::augment(m) %>%
+  ggplot(aes(x = log10.gdp., y = .resid)) + 
+  geom_smooth(method = "lm") +
+  geom_point()
+```
+
+![](tidyverse-explore_files/figure-gfm/unnamed-chunk-40-1.png)<!-- -->
+
+In reality, the residuals look stationary and well distributed,
+supporting the idea of satisfaction increasing as a logarithmic, but not
+fully saturating, effect of income.
 
 # Data Appendix
 
